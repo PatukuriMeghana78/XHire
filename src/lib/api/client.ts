@@ -58,6 +58,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const token = tokenStore.get();
 
+  const requestBody: BodyInit | null = isFormData
+    ? (body as FormData)
+    : body !== undefined
+      ? JSON.stringify(body)
+      : null;
+
   const response = await fetch(buildUrl(path, query), {
     ...rest,
     headers: {
@@ -65,7 +71,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(headers as Record<string, string> | undefined),
     },
-    body: isFormData ? (body as FormData) : body !== undefined ? JSON.stringify(body) : undefined,
+    body: requestBody,
   });
 
   if (!response.ok) {
