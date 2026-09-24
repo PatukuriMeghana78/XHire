@@ -14,6 +14,10 @@ import { Route as CandidateRouteImport } from './routes/candidate'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as RecruiterRouteImport } from './routes/recruiter'
 import { Route as RegisterRouteImport } from './routes/register'
+import { Route as CandidateIndexRouteImport } from './routes/candidate.index'
+import { Route as CandidateApplicationsRouteImport } from './routes/candidate.applications'
+import { Route as CandidateJobsIndexRouteImport } from './routes/candidate.jobs.index'
+import { Route as CandidateJobsJobIdRouteImport } from './routes/candidate.jobs.$jobId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,40 +44,98 @@ const RegisterRoute = RegisterRouteImport.update({
   path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CandidateIndexRoute = CandidateIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => CandidateRoute,
+} as any)
+const CandidateApplicationsRoute = CandidateApplicationsRouteImport.update({
+  id: '/applications',
+  path: '/applications',
+  getParentRoute: () => CandidateRoute,
+} as any)
+const CandidateJobsIndexRoute = CandidateJobsIndexRouteImport.update({
+  id: '/jobs/',
+  path: '/jobs/',
+  getParentRoute: () => CandidateRoute,
+} as any)
+const CandidateJobsJobIdRoute = CandidateJobsJobIdRouteImport.update({
+  id: '/jobs/$jobId',
+  path: '/jobs/$jobId',
+  getParentRoute: () => CandidateRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/candidate': typeof CandidateRoute
+  '/candidate': typeof CandidateRouteWithChildren
   '/login': typeof LoginRoute
   '/recruiter': typeof RecruiterRoute
   '/register': typeof RegisterRoute
+  '/candidate/applications': typeof CandidateApplicationsRoute
+  '/candidate/': typeof CandidateIndexRoute
+  '/candidate/jobs/$jobId': typeof CandidateJobsJobIdRoute
+  '/candidate/jobs/': typeof CandidateJobsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/candidate': typeof CandidateRoute
   '/login': typeof LoginRoute
   '/recruiter': typeof RecruiterRoute
   '/register': typeof RegisterRoute
+  '/candidate/applications': typeof CandidateApplicationsRoute
+  '/candidate': typeof CandidateIndexRoute
+  '/candidate/jobs/$jobId': typeof CandidateJobsJobIdRoute
+  '/candidate/jobs': typeof CandidateJobsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/candidate': typeof CandidateRoute
+  '/candidate': typeof CandidateRouteWithChildren
   '/login': typeof LoginRoute
   '/recruiter': typeof RecruiterRoute
   '/register': typeof RegisterRoute
+  '/candidate/applications': typeof CandidateApplicationsRoute
+  '/candidate/': typeof CandidateIndexRoute
+  '/candidate/jobs/$jobId': typeof CandidateJobsJobIdRoute
+  '/candidate/jobs/': typeof CandidateJobsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/candidate' | '/login' | '/recruiter' | '/register'
+  fullPaths:
+    | '/'
+    | '/candidate'
+    | '/login'
+    | '/recruiter'
+    | '/register'
+    | '/candidate/applications'
+    | '/candidate/'
+    | '/candidate/jobs/$jobId'
+    | '/candidate/jobs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/candidate' | '/login' | '/recruiter' | '/register'
-  id: '__root__' | '/' | '/candidate' | '/login' | '/recruiter' | '/register'
+  to:
+    | '/'
+    | '/login'
+    | '/recruiter'
+    | '/register'
+    | '/candidate/applications'
+    | '/candidate'
+    | '/candidate/jobs/$jobId'
+    | '/candidate/jobs'
+  id:
+    | '__root__'
+    | '/'
+    | '/candidate'
+    | '/login'
+    | '/recruiter'
+    | '/register'
+    | '/candidate/applications'
+    | '/candidate/'
+    | '/candidate/jobs/$jobId'
+    | '/candidate/jobs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CandidateRoute: typeof CandidateRoute
+  CandidateRoute: typeof CandidateRouteWithChildren
   LoginRoute: typeof LoginRoute
   RecruiterRoute: typeof RecruiterRoute
   RegisterRoute: typeof RegisterRoute
@@ -116,12 +178,58 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/candidate/': {
+      id: '/candidate/'
+      path: '/'
+      fullPath: '/candidate/'
+      preLoaderRoute: typeof CandidateIndexRouteImport
+      parentRoute: typeof CandidateRoute
+    }
+    '/candidate/applications': {
+      id: '/candidate/applications'
+      path: '/applications'
+      fullPath: '/candidate/applications'
+      preLoaderRoute: typeof CandidateApplicationsRouteImport
+      parentRoute: typeof CandidateRoute
+    }
+    '/candidate/jobs/': {
+      id: '/candidate/jobs/'
+      path: '/jobs'
+      fullPath: '/candidate/jobs/'
+      preLoaderRoute: typeof CandidateJobsIndexRouteImport
+      parentRoute: typeof CandidateRoute
+    }
+    '/candidate/jobs/$jobId': {
+      id: '/candidate/jobs/$jobId'
+      path: '/jobs/$jobId'
+      fullPath: '/candidate/jobs/$jobId'
+      preLoaderRoute: typeof CandidateJobsJobIdRouteImport
+      parentRoute: typeof CandidateRoute
+    }
   }
 }
 
+interface CandidateRouteChildren {
+  CandidateApplicationsRoute: typeof CandidateApplicationsRoute
+  CandidateIndexRoute: typeof CandidateIndexRoute
+  CandidateJobsJobIdRoute: typeof CandidateJobsJobIdRoute
+  CandidateJobsIndexRoute: typeof CandidateJobsIndexRoute
+}
+
+const CandidateRouteChildren: CandidateRouteChildren = {
+  CandidateApplicationsRoute: CandidateApplicationsRoute,
+  CandidateIndexRoute: CandidateIndexRoute,
+  CandidateJobsJobIdRoute: CandidateJobsJobIdRoute,
+  CandidateJobsIndexRoute: CandidateJobsIndexRoute,
+}
+
+const CandidateRouteWithChildren = CandidateRoute._addFileChildren(
+  CandidateRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CandidateRoute: CandidateRoute,
+  CandidateRoute: CandidateRouteWithChildren,
   LoginRoute: LoginRoute,
   RecruiterRoute: RecruiterRoute,
   RegisterRoute: RegisterRoute,
