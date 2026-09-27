@@ -79,7 +79,7 @@ export function JobForm({
       return;
     }
     setErrors({});
-    onSubmit({ ...form, ...parsed.data, requiredSkills: skills });
+    onSubmit({ ...form, ...parsed.data, requiredSkills: skills } as Partial<Job>);
   }
 
   return (
@@ -101,7 +101,7 @@ export function JobForm({
           </div>
           <div className="space-y-2">
             <Label>Work mode</Label>
-            <Select value={form.workMode} onValueChange={(v) => set("workMode", v as WorkMode)}>
+            <Select value={form.workMode ?? "onsite"} onValueChange={(v) => set("workMode", v as WorkMode)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -114,7 +114,7 @@ export function JobForm({
           </div>
           <div className="space-y-2">
             <Label>Job type</Label>
-            <Select value={form.jobType} onValueChange={(v) => set("jobType", v as JobType)}>
+            <Select value={form.jobType ?? "full-time"} onValueChange={(v) => set("jobType", v as JobType)}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -128,7 +128,7 @@ export function JobForm({
           </div>
           <div className="space-y-2">
             <Label>Status</Label>
-            <Select value={form.status} onValueChange={(v) => set("status", v as Job["status"])}>
+            <Select value={form.status ?? "open"} onValueChange={(v) => set("status", v as Job["status"])}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>

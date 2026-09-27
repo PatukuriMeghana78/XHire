@@ -82,7 +82,7 @@ function RecruiterProfilePage() {
       return;
     }
     setErrors({});
-    save.mutate(parsed.data);
+    save.mutate(parsed.data as Partial<RecruiterProfile>);
   }
 
   return (
