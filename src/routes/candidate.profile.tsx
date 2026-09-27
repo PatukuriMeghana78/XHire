@@ -101,7 +101,7 @@ function CandidateProfilePage() {
       return;
     }
     setErrors({});
-    save.mutate({ ...parsed.data, skills });
+    save.mutate({ ...parsed.data, skills } as Partial<CandidateProfile>);
   }
 
   return (
@@ -234,7 +234,7 @@ function Field({
   children,
 }: {
   label: string;
-  error?: string;
+  error?: string | undefined;
   children: React.ReactNode;
 }) {
   return (
