@@ -1,12 +1,23 @@
 package services
 
 import (
-	"job_application_analysis/internal/repositories"
+	"math"
+	"strings"
 	"time"
+
+	"job_application_analysis/internal/models"
+	"job_application_analysis/internal/repositories"
 )
 
+// applicationReader is the slice of the application repository analytics needs.
+// Declared as an interface so time calculations can be unit-tested; the project builds
+// with CGO_ENABLED=0, so SQLite-backed throwaway databases are not available.
+type applicationReader interface {
+	FindByUserID(userID uint) ([]models.Application, error)
+}
+
 type AnalyticsService struct {
-	appRepo *repositories.ApplicationRepository
+	appRepo applicationReader
 }
 
 func NewAnalyticsService(appRepo *repositories.ApplicationRepository) *AnalyticsService {
@@ -49,12 +60,16 @@ func (s *AnalyticsService) GetDashboardStats(userID uint) (*DashboardStats, erro
 	}
 
 	for _, app := range apps {
-		switch app.Status {
-		case "Interview":
+		// Statuses reach the database from two generations of clients: the
+		// legacy email flow writes "Interview"/"Offer", the XHire UI writes the
+		// normalised lowercase form. Match case-insensitively so neither is
+		// silently counted as zero.
+		switch {
+		case strings.EqualFold(app.Status, "Interview"):
 			stats.Interviews++
-		case "Offer":
+		case strings.EqualFold(app.Status, "Offer"):
 			stats.Offers++
-		case "Rejected":
+		case strings.EqualFold(app.Status, "Rejected"):
 			stats.Rejected++
 		}
 	}
@@ -89,13 +104,117 @@ func (s *AnalyticsService) GetStatusDistribution(userID uint) ([]StatusDistribut
 }
 
 func (s *AnalyticsService) GetTimeToResponse(userID uint) ([]TimeToResponseData, error) {
-	// Simplified implementation - can be enhanced with actual time calculations
-	return []TimeToResponseData{
-		{DaysRange: "0-3 days", Count: 5, AvgDays: 2.1},
-		{DaysRange: "4-7 days", Count: 8, AvgDays: 5.3},
-		{DaysRange: "8-14 days", Count: 3, AvgDays: 10.2},
-		{DaysRange: "15+ days", Count: 2, AvgDays: 18.5},
-	}, nil
+	apps, err := s.appRepo.FindByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return bucketResponseDays(responseDays(apps)), nil
+}
+
+// responseStatuses are the statuses that represent a reply from the employer.
+// "Applied" is the baseline the candidate created, so it is never a response.
+var responseStatuses = map[string]bool{
+	"interview": true,
+	"offer":     true,
+	"hired":     true,
+	"rejected":  true,
+}
+
+func isResponseStatus(status string) bool {
+	return responseStatuses[strings.ToLower(strings.TrimSpace(status))]
+}
+
+// responseDays returns the elapsed days between applying and the first recorded
+// employer response, for every application where both timestamps actually exist.
+// Applications still pending, with no recorded dates, or whose dates contradict each
+// other are left out rather than estimated.
+func responseDays(apps []models.Application) []float64 {
+	out := make([]float64, 0, len(apps))
+
+	for _, app := range apps {
+		applied := app.AppliedDate
+		if applied.IsZero() {
+			applied = app.CreatedAt
+		}
+		response := firstResponseAt(app)
+		if applied.IsZero() || response.IsZero() || !response.After(applied) {
+			continue
+		}
+		out = append(out, response.Sub(applied).Hours()/24)
+	}
+
+	return out
+}
+
+// firstResponseAt prefers the earliest matching status-history entry, which is written
+// on every status change. It falls back to the application's own update time because
+// history rows were originally written best-effort, so older records may have none.
+func firstResponseAt(app models.Application) time.Time {
+	earliest := time.Time{}
+	for _, history := range app.StatusHistory {
+		if !isResponseStatus(history.Status) || history.ChangedAt.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || history.ChangedAt.Before(earliest) {
+			earliest = history.ChangedAt
+		}
+	}
+	if !earliest.IsZero() {
+		return earliest
+	}
+
+	if isResponseStatus(app.Status) {
+		if !app.LastUpdated.IsZero() {
+			return app.LastUpdated
+		}
+		return app.UpdatedAt
+	}
+
+	return time.Time{}
+}
+
+// timeToResponseLabels are ordered low to high; a response is placed in the first
+// bucket whose upper bound it does not exceed, so 3.0 days is "0-3 days" and
+// 3.9 days is "4-7 days".
+var timeToResponseLabels = []string{"0-3 days", "4-7 days", "8-14 days", "15+ days"}
+
+func bucketIndexFor(day float64) int {
+	switch {
+	case day <= 3:
+		return 0
+	case day <= 7:
+		return 1
+	case day <= 14:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func bucketResponseDays(days []float64) []TimeToResponseData {
+	counts := make([]int, len(timeToResponseLabels))
+	sums := make([]float64, len(timeToResponseLabels))
+
+	for _, day := range days {
+		index := bucketIndexFor(day)
+		counts[index]++
+		sums[index] += day
+	}
+
+	results := make([]TimeToResponseData, 0, len(timeToResponseLabels))
+	for index, label := range timeToResponseLabels {
+		if counts[index] == 0 {
+			continue
+		}
+		results = append(results, TimeToResponseData{
+			DaysRange: label,
+			Count:     counts[index],
+			AvgDays:   math.Round(sums[index]/float64(counts[index])*10) / 10,
+		})
+	}
+
+	return results
 }
 
 func (s *AnalyticsService) GetWeeklySummary(userID uint) (*WeeklySummary, error) {
@@ -118,7 +237,7 @@ func (s *AnalyticsService) GetWeeklySummary(userID uint) (*WeeklySummary, error)
 		if app.AppliedDate.After(weekAgo) {
 			summary.ApplicationsThisWeek++
 		}
-		if app.Status == "Interview" && app.UpdatedAt.After(weekAgo) {
+		if strings.EqualFold(app.Status, "Interview") && app.UpdatedAt.After(weekAgo) {
 			summary.InterviewsThisWeek++
 		}
 	}
@@ -133,7 +252,7 @@ func (s *AnalyticsService) GetWeeklySummary(userID uint) (*WeeklySummary, error)
 
 	pendingCount := 0
 	for _, app := range apps {
-		if app.Status == "Applied" {
+		if strings.EqualFold(app.Status, "Applied") {
 			pendingCount++
 		}
 	}

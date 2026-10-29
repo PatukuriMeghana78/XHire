@@ -121,6 +121,18 @@ func NormalizeStatus(status string) string {
 	}
 }
 
+// ValidStatusUpdate reports whether an incoming application status is one of
+// the platform's stages. Values are stored as sent, so this only gates writes;
+// free-form strings would otherwise leak into status analytics.
+func ValidStatusUpdate(status string) bool {
+	switch NormalizeStatus(status) {
+	case "applied", "under-review", "shortlisted", "interview", "rejected", "hired":
+		return true
+	default:
+		return false
+	}
+}
+
 func ApplicationFromModel(app *models.Application, candidateName string) ApplicationResponse {
 	jobID := ""
 	jobTitle := app.Role
@@ -242,12 +254,59 @@ type ResumeResponse struct {
 }
 
 func ResumeFromModel(r *models.Resume) ResumeResponse {
+	// Expose the authenticated download endpoint rather than a raw file path.
+	// The old "/uploads/resumes/..." URL was never served and leaked storage layout.
+	fileURL := r.FileURL
+	if r.FilePath != "" {
+		fileURL = "/api/v1/resumes/" + ID(r.ID) + "/download"
+	}
 	return ResumeResponse{
 		ID:          ID(r.ID),
 		CandidateID: ID(r.CandidateID),
 		FileName:    r.FileName,
-		FileURL:     r.FileURL,
+		FileURL:     fileURL,
 		UploadedAt:  r.CreatedAt.UTC().Format(time.RFC3339),
 		SizeKb:      r.SizeKb,
+	}
+}
+
+// GmailStatusResponse reports what the dashboard needs to know about a user's Gmail
+// connection. It carries no token material and no mailbox contents.
+type GmailStatusResponse struct {
+	Connected       bool   `json:"connected"`
+	NeedsReconnect  bool   `json:"needsReconnect"`
+	HasRefreshToken bool   `json:"hasRefreshToken"`
+	Reason          string `json:"reason,omitempty"`
+}
+
+// EmailEventResponse is one detected recruitment email. The subject and body are
+// never stored by the poller, so only the classified fields are returned.
+type EmailEventResponse struct {
+	ID                   string `json:"id"`
+	DetectedCompany      string `json:"detectedCompany"`
+	DetectedRole         string `json:"detectedRole"`
+	SuggestedStatus      string `json:"suggestedStatus"`
+	Confidence           int    `json:"confidence"`
+	ClassificationSource string `json:"classificationSource,omitempty"`
+	DetectedAt           string `json:"detectedAt"`
+	Confirmed            bool   `json:"confirmed"`
+	ApplicationID        string `json:"applicationId,omitempty"`
+}
+
+func EmailEventFromModel(e *models.EmailEvent) EmailEventResponse {
+	applicationID := ""
+	if e.ApplicationID != nil {
+		applicationID = ID(*e.ApplicationID)
+	}
+	return EmailEventResponse{
+		ID:                   ID(e.ID),
+		DetectedCompany:      e.DetectedCompany,
+		DetectedRole:         e.DetectedRole,
+		SuggestedStatus:      NormalizeStatus(e.SuggestedStatus),
+		Confidence:           e.Confidence,
+		ClassificationSource: e.ClassificationSource,
+		DetectedAt:           e.ProcessedAt.UTC().Format(time.RFC3339),
+		Confirmed:            e.Confirmed,
+		ApplicationID:        applicationID,
 	}
 }

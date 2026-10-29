@@ -125,35 +125,32 @@ func (s *CandidateService) GetResumeByID(id uint) (*models.Resume, error) {
 	return s.profiles.GetResumeByID(id)
 }
 
+// AnalyzeResume returns an honest analysis result. The existing NLP service only
+// parses job emails (company/role/status/health/skill-overlap); it has no
+// PDF/DOCX text extraction or resume skill extractor, and adding one would
+// require a new dependency. Rather than fabricate scores from the candidate's
+// skill count (the previous behaviour), we report parsing as unavailable and
+// return only real data: file metadata and the candidate's declared skills.
 func (s *CandidateService) AnalyzeResume(resume *models.Resume, profile *models.CandidateProfile) map[string]interface{} {
-	skills := []string{}
-	if profile != nil {
-		skills = profile.Skills
+	declared := []string{}
+	if profile != nil && profile.Skills != nil {
+		declared = profile.Skills
 	}
-	score := 55
-	if len(skills) >= 5 {
-		score = 78
-	}
-	if len(skills) >= 10 {
-		score = 88
-	}
-	return map[string]interface{}{
-		"resumeId":        strconv.FormatUint(uint64(resume.ID), 10),
-		"overallScore":    score,
-		"extractedSkills": skills,
-		"strengths":       []string{"Clear skill inventory", "Ready for role matching"},
-		"improvements":    []string{"Add quantified achievements", "Tailor resume to each job"},
-		"sections": []map[string]interface{}{
-			{"name": "Skills", "score": minInt(100, 50+len(skills)*4), "feedback": "Skills are used for job matching."},
-			{"name": "Experience", "score": 70, "feedback": "Keep experience aligned with target roles."},
-			{"name": "Education", "score": 65, "feedback": "Education is optional for most software roles."},
-		},
-	}
-}
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
+	return map[string]interface{}{
+		"resumeId": strconv.FormatUint(uint64(resume.ID), 10),
+		"parsed":   false,
+		"status":   "unavailable",
+		"reason": "Resume content parsing is not available: the current NLP service only analyzes job emails and cannot extract text from PDF/DOCX resumes. No scores were generated to avoid fabricating results.",
+		// Honest empties — nothing was extracted from the resume content.
+		"overallScore":    0,
+		"extractedSkills": []string{},
+		"sections":        []interface{}{},
+		"strengths":       []string{},
+		"improvements":    []string{},
+		// Real data we actually have.
+		"declaredSkills": declared,
+		"fileName":       resume.FileName,
+		"sizeKb":         resume.SizeKb,
 	}
-	return b
 }

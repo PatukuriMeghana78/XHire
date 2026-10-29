@@ -4,6 +4,7 @@ import { Briefcase, FileText, Sparkles, Target } from "lucide-react";
 
 import { ExplanationPanel } from "@/components/ai/ExplanationPanel";
 import { EmptyState } from "@/components/common/EmptyState";
+import { GmailCard } from "@/components/email/GmailCard";
 import { PageHeader } from "@/components/common/PageHeader";
 import { QueryBoundary } from "@/components/common/QueryBoundary";
 import { StatCard } from "@/components/common/StatCard";
@@ -15,6 +16,12 @@ import { formatRelativeDate } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { aiService, applicationService, jobService } from "@/services";
 
+/** Query the Gmail redirect can leave behind on this route. */
+interface DashboardSearch {
+  gmail?: "connected" | "error";
+  reason?: string;
+}
+
 export const Route = createFileRoute("/candidate/")({
   head: () => ({
     meta: [
@@ -24,22 +31,36 @@ export const Route = createFileRoute("/candidate/")({
       { property: "og:description", content: "Track applications and AI match insight." },
     ],
   }),
+  validateSearch: (search: Record<string, unknown>): DashboardSearch => {
+    const gmailParam = search["gmail"];
+    const reasonParam = search["reason"];
+    const parsed: DashboardSearch = {};
+    if (gmailParam === "connected" || gmailParam === "error") parsed.gmail = gmailParam;
+    if (typeof reasonParam === "string") parsed.reason = reasonParam;
+    return parsed;
+  },
   component: CandidateDashboard,
 });
 
 function CandidateDashboard() {
   const { user } = useAuth();
+  const { gmail, reason } = Route.useSearch();
   const applications = useQuery({
     queryKey: ["applications", "mine"],
     queryFn: () => applicationService.listMyApplications(),
   });
   const jobs = useQuery({ queryKey: ["jobs", {}], queryFn: () => jobService.listJobs() });
-  const topMatch = useQuery({
-    queryKey: ["ai", "match", "j-1"],
-    queryFn: () => aiService.getJobMatchExplanation("j-1"),
-  });
 
   const list = applications.data ?? [];
+  const recommended = (jobs.data ?? []).slice(0, 3);
+  // The match panel explains a real job. The previous hardcoded "j-1" was a mock
+  // fixture id, which the numeric-id backend endpoint rejected with HTTP 400.
+  const matchJobId = recommended[0]?.id;
+  const topMatch = useQuery({
+    queryKey: ["ai", "match", matchJobId],
+    queryFn: () => aiService.getJobMatchExplanation(matchJobId as string),
+    enabled: Boolean(matchJobId),
+  });
   const active = list.filter((a) => !["rejected", "hired"].includes(a.status)).length;
   const shortlisted = list.filter((a) => ["shortlisted", "interview"].includes(a.status)).length;
   const avgScore = list.length
@@ -105,9 +126,12 @@ function CandidateDashboard() {
           </CardContent>
         </Card>
 
-        <QueryBoundary isLoading={topMatch.isLoading} error={topMatch.error} onRetry={topMatch.refetch}>
-          {topMatch.data ? <ExplanationPanel explanation={topMatch.data} /> : null}
-        </QueryBoundary>
+        <div className="space-y-6">
+          <GmailCard outcome={gmail ? { state: gmail, message: reason } : undefined} />
+          <QueryBoundary isLoading={topMatch.isLoading} error={topMatch.error} onRetry={topMatch.refetch}>
+            {topMatch.data ? <ExplanationPanel explanation={topMatch.data} /> : null}
+          </QueryBoundary>
+        </div>
       </div>
 
       <section className="space-y-4">
@@ -119,7 +143,7 @@ function CandidateDashboard() {
         </div>
         <QueryBoundary isLoading={jobs.isLoading} error={jobs.error} onRetry={jobs.refetch}>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {(jobs.data ?? []).slice(0, 3).map((job) => (
+            {recommended.map((job) => (
               <JobCard key={job.id} job={job} />
             ))}
           </div>

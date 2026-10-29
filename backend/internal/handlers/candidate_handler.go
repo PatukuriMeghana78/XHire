@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"job_application_analysis/internal/dto"
@@ -32,6 +33,19 @@ func NewCandidateHandler(
 }
 
 const resumeUploadDir = "uploads/resumes"
+
+// maxResumeSizeBytes caps uploads at 5 MB (matches the frontend limit).
+const maxResumeSizeBytes = 5 << 20
+
+// allowedResumeExts is the whitelist of accepted resume file extensions.
+var allowedResumeExts = map[string]bool{
+	".pdf":  true,
+	".doc":  true,
+	".docx": true,
+	".txt":  true,
+	".md":   true,
+	".rtf":  true,
+}
 
 // GetMyProfile handles GET /api/v1/candidate/profile
 func (h *CandidateHandler) GetMyProfile(c *gin.Context) {
@@ -95,27 +109,121 @@ func (h *CandidateHandler) UploadResume(c *gin.Context) {
 		return
 	}
 
+	if fh.Size > maxResumeSizeBytes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "resume too large (max 5 MB)"})
+		return
+	}
+
+	// Keep the original name only for display; never let it reach the filesystem.
+	original := filepath.Base(fh.Filename)
+	ext := strings.ToLower(filepath.Ext(original))
+	if !allowedResumeExts[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file type"})
+		return
+	}
+
 	if err := os.MkdirAll(resumeUploadDir, 0o755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare storage"})
 		return
 	}
 
-	safeName := filepath.Base(fh.Filename)
-	stored := fmt.Sprintf("%d_%d_%s", userID, time.Now().UnixNano(), safeName)
+	// Server-generated name from trusted values only (user id + timestamp + whitelisted ext).
+	stored := fmt.Sprintf("%d_%d%s", userID, time.Now().UnixNano(), ext)
 	dst := filepath.Join(resumeUploadDir, stored)
 	if err := c.SaveUploadedFile(fh, dst); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save resume"})
 		return
 	}
 
-	url := "/uploads/resumes/" + stored
 	sizeKb := int(fh.Size / 1024)
-	resume, err := h.candidates.SaveResume(userID, safeName, dst, url, sizeKb)
+	resume, err := h.candidates.SaveResume(userID, original, dst, "", sizeKb)
 	if err != nil {
+		_ = os.Remove(dst) // don't leave an orphaned file if the DB record failed
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record resume"})
 		return
 	}
 	c.JSON(http.StatusCreated, dto.ResumeFromModel(resume))
+}
+
+// DownloadResume handles GET /api/v1/resumes/:resumeId/download.
+// Serves the stored file only to its owning candidate or to a recruiter.
+func (h *CandidateHandler) DownloadResume(c *gin.Context) {
+	resumeID, err := dto.ParseID(c.Param("resumeId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid resume id"})
+		return
+	}
+
+	resume, err := h.candidates.GetResumeByID(resumeID)
+	if err != nil || resume == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "resume not found"})
+		return
+	}
+
+	// Authorization: the owning candidate, or any recruiter (recruiters review candidates).
+	userID := c.GetUint("user_id")
+	role := c.GetString("role")
+	if role != models.RoleRecruiter && resume.CandidateID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	// Confine the served path to the upload directory (defense-in-depth against
+	// any tampered/legacy FilePath value).
+	absPath, ok := safeResumePath(resume.FilePath)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "resume file unavailable"})
+		return
+	}
+	if _, statErr := os.Stat(absPath); statErr != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "resume file unavailable"})
+		return
+	}
+
+	c.FileAttachment(absPath, sanitizeDownloadName(resume.FileName))
+}
+
+// resumeOwnedBy reports whether a resume record belongs to the given user.
+func resumeOwnedBy(resume *models.Resume, userID uint) bool {
+	return resume != nil && userID != 0 && resume.CandidateID == userID
+}
+
+// safeResumePath resolves a stored resume path and verifies it stays inside the
+// upload directory. Returns ok=false if the path escapes or is empty.
+func safeResumePath(stored string) (string, bool) {
+	if stored == "" {
+		return "", false
+	}
+	baseAbs, err := filepath.Abs(resumeUploadDir)
+	if err != nil {
+		return "", false
+	}
+	abs, err := filepath.Abs(stored)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(baseAbs, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", false
+	}
+	return abs, true
+}
+
+// sanitizeDownloadName strips path separators and header-injection characters
+// from the display filename used in Content-Disposition.
+func sanitizeDownloadName(name string) string {
+	name = filepath.Base(name)
+	name = strings.Map(func(r rune) rune {
+		switch r {
+		case '"', '\r', '\n', 0:
+			return -1
+		}
+		return r
+	}, name)
+	if name == "" || name == "." {
+		name = "resume"
+	}
+	return name
 }
 
 // GetCandidateResume handles GET /api/v1/candidates/:id/resume (recruiter view).
@@ -141,10 +249,18 @@ func (h *CandidateHandler) GetResumeAnalysis(c *gin.Context) {
 		return
 	}
 	resume, err := h.candidates.GetResumeByID(resumeID)
-	if err != nil {
+	if err != nil || resume == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "resume not found"})
 		return
 	}
+
+	// This route is candidate-only, so the caller is a candidate: only the owner
+	// may read the analysis of their own resume (otherwise IDs are enumerable).
+	if !resumeOwnedBy(resume, c.GetUint("user_id")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
 	profile, _ := h.profiles.GetCandidateByUserID(resume.CandidateID)
 	c.JSON(http.StatusOK, h.candidates.AnalyzeResume(resume, profile))
 }

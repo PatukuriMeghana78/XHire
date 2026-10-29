@@ -83,11 +83,12 @@ class StatusClassifier:
     ]
         }
         
-        # Priority multipliers (Interview and Rejection are stronger signals)
+        # Priority multipliers (Interview, Offer and Rejection are stronger signals)
         self.multipliers = {
             'Applied': 1.0,
             'Interview': 1.5,   # Interview signals are strong
-            'Rejected': 1.3     # Rejection signals are strong
+            'Rejected': 1.3,    # Rejection signals are strong
+            'Offer': 1.4        # Offer signals are strong
         }
     
     def classify(self, lowercase_text: str) -> dict:
@@ -112,9 +113,11 @@ class StatusClassifier:
                     scores[status] += count
                     matches[status].append(keyword)
         
-        # Apply priority multipliers
+        # Apply priority multipliers. Statuses are keyed off `keywords`, so a status
+        # missing from `multipliers` falls back to neutral weighting instead of
+        # raising (which previously failed every /analyze request).
         for status in scores:
-            scores[status] *= self.multipliers[status]
+            scores[status] *= self.multipliers.get(status, 1.0)
         
         # Find winning status
         max_score = max(scores.values())

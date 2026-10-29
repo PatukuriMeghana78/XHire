@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { FileUp, Upload } from "lucide-react";
+import { Download, FileUp, Upload } from "lucide-react";
 import { useRef } from "react";
 import { toast } from "sonner";
 
@@ -106,9 +106,25 @@ function ResumePage() {
                   </p>
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
-                Replace
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    resume.data &&
+                    resumeService
+                      .downloadResume(resume.data.id, resume.data.fileName)
+                      .catch((error) =>
+                        toast.error((error as Error).message || "Download failed"),
+                      )
+                  }
+                >
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Download
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
+                  Replace
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ) : (
@@ -137,53 +153,81 @@ function ResumePage() {
                       <CardTitle className="font-display text-base">Resume analysis</CardTitle>
                       <CardDescription>Produced by the XHire analysis service.</CardDescription>
                     </div>
-                    <MatchScore score={analysis.data.overallScore} label="score" />
+                    {analysis.data.parsed === false ? null : (
+                      <MatchScore score={analysis.data.overallScore} label="score" />
+                    )}
                   </div>
                 </CardHeader>
-                <CardContent className="space-y-5">
-                  {analysis.data.sections.map((section) => (
-                    <div key={section.name} className="space-y-1.5">
-                      <div className="flex items-baseline justify-between gap-3 text-sm">
-                        <span className="font-medium">{section.name}</span>
-                        <span className="text-muted-foreground">{section.score}/100</span>
+                {analysis.data.parsed === false ? (
+                  <CardContent className="space-y-5">
+                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                      <p className="font-medium text-foreground">Analysis unavailable</p>
+                      <p className="mt-1">
+                        {analysis.data.reason ??
+                          "Resume content parsing is not available for this file."}
+                      </p>
+                    </div>
+                    {(analysis.data.declaredSkills?.length ?? 0) > 0 ? (
+                      <div>
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Skills from your profile
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {analysis.data.declaredSkills?.map((skill) => (
+                            <Badge key={skill} variant="secondary">
+                              {skill}
+                            </Badge>
+                          ))}
+                        </div>
                       </div>
-                      <Progress value={section.score} className="h-1.5" />
-                      <p className="text-xs text-muted-foreground">{section.feedback}</p>
-                    </div>
-                  ))}
+                    ) : null}
+                  </CardContent>
+                ) : (
+                  <CardContent className="space-y-5">
+                    {analysis.data.sections.map((section) => (
+                      <div key={section.name} className="space-y-1.5">
+                        <div className="flex items-baseline justify-between gap-3 text-sm">
+                          <span className="font-medium">{section.name}</span>
+                          <span className="text-muted-foreground">{section.score}/100</span>
+                        </div>
+                        <Progress value={section.score} className="h-1.5" />
+                        <p className="text-xs text-muted-foreground">{section.feedback}</p>
+                      </div>
+                    ))}
 
-                  <div>
-                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Extracted skills
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {analysis.data.extractedSkills.map((skill) => (
-                        <Badge key={skill} variant="secondary">
-                          {skill}
-                        </Badge>
-                      ))}
+                    <div>
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Extracted skills
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {analysis.data.extractedSkills.map((skill) => (
+                          <Badge key={skill} variant="secondary">
+                            {skill}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <p className="mb-1.5 text-sm font-medium">Strengths</p>
-                      <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">
-                        {analysis.data.strengths.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="mb-1.5 text-sm font-medium">Strengths</p>
+                        <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">
+                          {analysis.data.strengths.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="mb-1.5 text-sm font-medium">Improvements</p>
+                        <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">
+                          {analysis.data.improvements.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
                     </div>
-                    <div>
-                      <p className="mb-1.5 text-sm font-medium">Improvements</p>
-                      <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">
-                        {analysis.data.improvements.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                </CardContent>
+                  </CardContent>
+                )}
               </Card>
             ) : null}
           </QueryBoundary>

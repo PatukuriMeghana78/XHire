@@ -4,14 +4,13 @@ import (
 	"errors"
 	"time"
 
+	"job_application_analysis/internal/config"
 	"job_application_analysis/internal/models"
 	"job_application_analysis/internal/repositories"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
-
-var jwtSecret = []byte("supersecretkey") // later move to env
 
 type AuthService struct {
 	repo        *repositories.UserRepository
@@ -35,7 +34,7 @@ func (s *AuthService) createToken(user *models.User) (string, error) {
 		"role":    normalizeRole(user.Role),
 		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	})
-	return token.SignedString(jwtSecret)
+	return token.SignedString(config.JWTSecret())
 }
 
 func (s *AuthService) seedProfile(user *models.User) {

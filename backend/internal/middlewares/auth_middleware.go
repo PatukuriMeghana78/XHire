@@ -1,14 +1,15 @@
 package middlewares
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-)
 
-var jwtSecret = []byte("supersecretkey")
+	"job_application_analysis/internal/config"
+)
 
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -21,7 +22,10 @@ func AuthRequired() gin.HandlerFunc {
 		tokenString := strings.TrimPrefix(header, "Bearer ")
 
 		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
-			return jwtSecret, nil
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("unexpected signing method")
+			}
+			return config.JWTSecret(), nil
 		})
 
 		if err != nil || !token.Valid {

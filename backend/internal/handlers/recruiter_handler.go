@@ -136,6 +136,10 @@ func (h *RecruiterHandler) UpdateStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !dto.ValidStatusUpdate(req.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
+		return
+	}
 	app, err := h.apps.RecruiterUpdateStatus(recruiterID, appID, req.Status)
 	if err != nil {
 		if err.Error() == "unauthorized" {

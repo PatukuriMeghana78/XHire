@@ -105,3 +105,36 @@ export const api = {
   delete: <T>(path: string, options?: RequestOptions) =>
     apiRequest<T>(path, { ...options, method: "DELETE" }),
 };
+
+/**
+ * Download a file from an authenticated endpoint. Sends the Bearer token (a
+ * plain <a href> cannot), then triggers a browser save via an object URL.
+ */
+export async function apiDownload(path: string, filename?: string): Promise<void> {
+  const token = tokenStore.get();
+  const response = await fetch(buildUrl(path), {
+    method: "GET",
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+
+  if (!response.ok) {
+    let message = `Download failed with status ${response.status}`;
+    try {
+      const details = await response.json();
+      message = (details as { error?: string })?.error ?? message;
+    } catch {
+      // ignore body parse errors
+    }
+    throw new ApiError(message, response.status);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename || "download";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}

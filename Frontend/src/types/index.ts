@@ -121,6 +121,11 @@ export interface ResumeAnalysis {
   extractedSkills: string[];
   strengths: string[];
   improvements: string[];
+  // Present when the backend could not parse resume content (no fabrication).
+  parsed?: boolean;
+  status?: string;
+  reason?: string;
+  declaredSkills?: string[];
 }
 
 export interface SkillGap {
@@ -149,4 +154,25 @@ export interface RankedCandidate {
   topReasons: string[];
   matchedSkills: string[];
   missingSkills: string[];
+}
+
+/** Gmail connection state, as reported by the backend for the signed-in user. */
+export interface GmailStatus {
+  connected: boolean;
+  needsReconnect: boolean;
+  hasRefreshToken: boolean;
+  reason?: string;
+}
+
+/** One recruitment email the Gmail poller already imported and classified. */
+export interface DetectedEmail {
+  id: string;
+  detectedCompany: string;
+  detectedRole: string;
+  suggestedStatus: string;
+  confidence: number;
+  classificationSource?: string;
+  detectedAt: string;
+  confirmed: boolean;
+  applicationId?: string;
 }

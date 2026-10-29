@@ -126,20 +126,15 @@ function CandidateDetailPage() {
                           </div>
                         </div>
                         <Button
-                          asChild={Boolean(resume.data.fileUrl)}
                           variant="outline"
                           size="sm"
-                          disabled={!resume.data.fileUrl}
+                          disabled={!resume.data.id}
+                          onClick={() =>
+                            resume.data &&
+                            resumeService.downloadResume(resume.data.id, resume.data.fileName)
+                          }
                         >
-                          {resume.data.fileUrl ? (
-                            <a href={resume.data.fileUrl} target="_blank" rel="noreferrer">
-                              <Download className="mr-1.5 h-3.5 w-3.5" /> Open
-                            </a>
-                          ) : (
-                            <span>
-                              <Download className="mr-1.5 h-3.5 w-3.5" /> Open
-                            </span>
-                          )}
+                          <Download className="mr-1.5 h-3.5 w-3.5" /> Download
                         </Button>
                       </div>
                     ) : (

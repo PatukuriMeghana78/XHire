@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"job_application_analysis/internal/dto"
 	"job_application_analysis/internal/models"
 	"job_application_analysis/internal/repositories"
 	"job_application_analysis/internal/services"
@@ -207,6 +208,11 @@ func (h *ApplicationHandler) UpdateStatus(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !dto.ValidStatusUpdate(req.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
 		return
 	}
 

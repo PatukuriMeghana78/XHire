@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"net/url"
 	"os"
 
 	"github.com/gin-contrib/cors"
@@ -22,6 +23,16 @@ func Register(r *gin.Engine, db *gorm.DB) {
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
+		// Accept any local dev origin (localhost/127.0.0.1 on any port) so the
+		// preflight succeeds whether Vite serves on 5173/5174 or via 127.0.0.1.
+		AllowOriginFunc: func(origin string) bool {
+			u, err := url.Parse(origin)
+			if err != nil || u.Scheme != "http" {
+				return false
+			}
+			h := u.Hostname()
+			return h == "localhost" || h == "127.0.0.1"
+		},
 	}))
 
 	// Repositories
@@ -32,10 +43,10 @@ func Register(r *gin.Engine, db *gorm.DB) {
 	jobRepo := repositories.NewJobRepository(db)
 	profileRepo := repositories.NewProfileRepository(db)
 
-	// NLP service URL — reads from .env, defaults to port 8001
+	// NLP service URL — reads from .env, defaults to the FastAPI port 8000
 	nlpURL := os.Getenv("NLP_SERVICE_URL")
 	if nlpURL == "" {
-		nlpURL = "http://localhost:8001" // ← Change to 8001
+		nlpURL = "http://localhost:8000"
 	}
 
 	// Services
@@ -66,7 +77,8 @@ func Register(r *gin.Engine, db *gorm.DB) {
 	emailHandler := handlers.NewEmailHandler(emailService)
 	suggestionHandler := handlers.NewSuggestionHandler(db)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
-	settingsHandler := handlers.NewSettingsHandler(userRepo)
+	settingsHandler := handlers.NewSettingsHandler(userRepo, emailService)
+	emailV1Handler := handlers.NewEmailV1Handler(emailService)
 
 	// XHire handlers
 	jobHandler := handlers.NewJobHandler(jobService, appService, matchService, profileRepo)
@@ -78,8 +90,14 @@ func Register(r *gin.Engine, db *gorm.DB) {
 	r.POST("/api/auth/signup", authHandler.Signup)
 	r.POST("/api/auth/login", authHandler.Login)
 
-	r.GET("/api/email/oauth", emailHandler.StartOAuth)
+	// Gmail OAuth: starting the flow requires authentication so the connection
+	// binds to the logged-in user. The callback stays public because Google
+	// redirects the browser to it with the authorization code and state.
 	r.GET("/api/email/oauth/callback", emailHandler.HandleOAuthCallback)
+
+	oauthStart := r.Group("/api/email")
+	oauthStart.Use(middlewares.AuthRequired())
+	oauthStart.GET("/oauth", emailHandler.StartOAuth)
 
 	// Protected routes
 	api := r.Group("/api")
@@ -126,7 +144,7 @@ func Register(r *gin.Engine, db *gorm.DB) {
 		api.POST("/settings/gmail/disconnect", settingsHandler.DisconnectGmail)
 	}
 
-	registerV1(r, authHandler, jobHandler, candidateHandler, recruiterHandler, applicationV1Handler)
+	registerV1(r, authHandler, jobHandler, candidateHandler, recruiterHandler, applicationV1Handler, emailV1Handler)
 }
 
 // registerV1 wires the XHire /api/v1 surface used by the React frontend.
@@ -137,6 +155,7 @@ func registerV1(
 	candidateHandler *handlers.CandidateHandler,
 	recruiterHandler *handlers.RecruiterHandler,
 	applicationV1Handler *handlers.ApplicationV1Handler,
+	emailV1Handler *handlers.EmailV1Handler,
 ) {
 	v1 := r.Group("/api/v1")
 
@@ -155,6 +174,9 @@ func registerV1(
 		authed.GET("/jobs/:id", jobHandler.Get)
 
 		authed.GET("/applications/:id", applicationV1Handler.GetByID)
+
+		// Secure resume download: handler enforces owner-candidate or recruiter.
+		authed.GET("/resumes/:resumeId/download", candidateHandler.DownloadResume)
 	}
 
 	// Candidate-only
@@ -173,6 +195,14 @@ func registerV1(
 		candidate.GET("/candidate/jobs/:jobId/match", candidateHandler.JobMatch)
 
 		candidate.POST("/jobs/:id/apply", jobHandler.Apply)
+
+		// Gmail: status, imported recruitment emails, on-demand sync and (re)connect.
+		// Every handler scopes to the authenticated user id from the JWT.
+		candidate.GET("/candidate/email/status", emailV1Handler.Status)
+		candidate.GET("/candidate/email/messages", emailV1Handler.Messages)
+		candidate.GET("/candidate/email/connect-url", emailV1Handler.ConnectURL)
+		candidate.POST("/candidate/email/sync", emailV1Handler.Sync)
+		candidate.POST("/candidate/email/disconnect", emailV1Handler.Disconnect)
 	}
 
 	// Recruiter-only

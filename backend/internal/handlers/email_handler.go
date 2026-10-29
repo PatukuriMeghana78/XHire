@@ -1,12 +1,12 @@
 package handlers
 
 import (
-	"fmt"
+	"log"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"job_application_analysis/internal/dto"
 	"job_application_analysis/internal/models"
 	"job_application_analysis/internal/services"
 )
@@ -25,10 +25,21 @@ func NewEmailHandler(service *services.EmailService) *EmailHandler {
 
 func (h *EmailHandler) StartOAuth(c *gin.Context) {
 
-	// Temporary hardcoded userID for testing
-	userID := uint(1)
+	// Use the authenticated user's ID so each Gmail connection binds to the
+	// correct account (previously hardcoded to user 1, causing mix-ups).
+	userID := c.GetUint("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
-	state := fmt.Sprintf("%d", userID)
+	// Issue a cryptographically random, single-use, expiring state bound to this
+	// user. The state carries no secrets and is validated on callback (CSRF).
+	state, err := h.service.IssueOAuthState(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start OAuth"})
+		return
+	}
 
 	authURL := h.service.GetAuthURL(state)
 
@@ -41,51 +52,72 @@ func (h *EmailHandler) StartOAuth(c *gin.Context) {
 
 func (h *EmailHandler) HandleOAuthCallback(c *gin.Context) {
 
+	// Google returns ?error=... when the user declines consent or the request itself
+	// is rejected. There is no code to exchange, so report it and stop.
+	if googleErr := c.Query("error"); googleErr != "" {
+		log.Println("⚠️ Gmail OAuth callback rejected by Google:", googleErr)
+		reason := services.OAuthFailureReason(googleErr)
+		c.Redirect(http.StatusTemporaryRedirect, services.OAuthReturnURL(false, reason))
+		return
+	}
+
 	code := c.Query("code")
 	state := c.Query("state")
 
 	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing code"})
+		c.Redirect(http.StatusTemporaryRedirect,
+			services.OAuthReturnURL(false, "Gmail connection failed: no authorization code was returned."))
 		return
 	}
 
-	userIDInt, err := strconv.Atoi(state)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid state"})
+	// Validate and consume the state. Rejects missing, unknown, expired, or replayed
+	// states, and recovers the user the flow was started for.
+	userID, ok := h.service.ValidateOAuthState(state)
+	if !ok {
+		log.Println("⚠️ Gmail OAuth callback rejected: invalid or expired state")
+		c.Redirect(http.StatusTemporaryRedirect,
+			services.OAuthReturnURL(false, "Gmail connection failed: the request expired or was already used. Start again."))
 		return
 	}
 
 	token, err := h.service.ExchangeCode(code)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// The exchange error can mention Google's response text; log it here and send
+		// the user a stable reason instead.
+		log.Println("❌ Gmail code exchange failed for user", userID, ":", services.OAuthFailureReason("invalid_grant"))
+		c.Redirect(http.StatusTemporaryRedirect,
+			services.OAuthReturnURL(false, services.OAuthFailureReason("invalid_grant")))
 		return
 	}
 
-	gmailToken := models.GmailToken{
-		UserID:       uint(userIDInt),
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		Expiry:       token.Expiry,
+	if token.RefreshToken == "" {
+		// Google only sends a refresh token with the first consent. Without one the
+		// connection dies an hour later, so say so instead of failing silently.
+		log.Printf("⚠️ Gmail grant for user %d has no refresh token", userID)
 	}
 
-	if err := h.service.DB().Create(&gmailToken).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	// Storage is an upsert keyed on this user, and an empty refresh token never
+	// overwrites a stored one, so a reconnect can actually repair the grant.
+	if err := h.service.PersistGmailGrant(userID, token); err != nil {
+		log.Println("❌ Failed to store Gmail grant for user", userID)
+		c.Redirect(http.StatusTemporaryRedirect,
+			services.OAuthReturnURL(false, "Gmail connected, but the session could not be saved. Try again."))
 		return
 	}
 
 	// Create notification for successful Gmail connection
 	notification := &models.Notification{
-		UserID:    uint(userIDInt),
+		UserID:    userID,
 		Type:      "system",
 		Title:     "Gmail Connected Successfully",
 		Message:   "Your Gmail account has been connected. Email sync will run automatically every 3 minutes.",
 		Read:      false,
-		ActionURL: "/emails",
+		ActionURL: "/candidate",
 	}
 	h.service.CreateConnectionNotification(notification)
 
-	// Redirect back to the frontend Settings page
-	c.Redirect(http.StatusTemporaryRedirect, "http://localhost:5173/settings?gmail=connected")
+	// Redirect back to the candidate dashboard, which is where the Gmail card lives.
+	c.Redirect(http.StatusTemporaryRedirect, services.OAuthReturnURL(true, ""))
 }
 
 // ===============================
@@ -118,9 +150,18 @@ func (h *EmailHandler) ConfirmSuggestion(c *gin.Context) {
 		return
 	}
 
+	if !dto.ValidStatusUpdate(req.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
+		return
+	}
+
 	app, err := h.service.ConfirmSuggestion(userID, req.EmailEventID, req.ApplicationID, req.Status)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if err.Error() == "unauthorized" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "unauthorized"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to confirm suggestion"})
 		return
 	}
 
@@ -140,7 +181,11 @@ func (h *EmailHandler) IgnoreSuggestion(c *gin.Context) {
 	}
 
 	if err := h.service.IgnoreSuggestion(userID, req.EmailEventID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if err.Error() == "unauthorized" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "unauthorized"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ignore suggestion"})
 		return
 	}
 
@@ -152,7 +197,8 @@ func (h *EmailHandler) SyncEmails(c *gin.Context) {
 
 	count, err := h.service.SyncUserEmails(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// Never echo the raw Gmail/oauth2 error text to the client.
+		writeGmailError(c, err)
 		return
 	}
 

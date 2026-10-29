@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
+	"job_application_analysis/internal/config"
 	"job_application_analysis/internal/database"
 	"job_application_analysis/internal/models"
 	"job_application_analysis/internal/repositories"
@@ -24,6 +25,11 @@ func main() {
 	dbURL := os.Getenv("DB_URL")
 	if dbURL == "" {
 		log.Fatal("❌ DB_URL is not set")
+	}
+
+	// Fail safely if the JWT signing secret is missing or insecure.
+	if err := config.ValidateJWTSecret(); err != nil {
+		log.Fatal("❌ JWT configuration error:", err)
 	}
 
 	port := os.Getenv("PORT")

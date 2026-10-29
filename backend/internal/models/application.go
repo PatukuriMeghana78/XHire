@@ -49,9 +49,13 @@ type EmailEvent struct {
 	DetectedRole    string    `json:"detected_role"`
 	SuggestedStatus string    `json:"suggested_status"`
 	Confidence      int       `json:"confidence"`
-	ProcessedAt     time.Time `json:"processed_at"`
-	Confirmed       bool      `json:"confirmed"`
-	ApplicationID   *uint     `json:"application_id,omitempty"`
+	// ClassificationSource records whether the fields above came from the NLP
+	// service ("nlp") or the offline subject heuristic ("heuristic"), so genuine
+	// results are distinguishable from fallbacks.
+	ClassificationSource string    `json:"classification_source,omitempty"`
+	ProcessedAt          time.Time `json:"processed_at"`
+	Confirmed            bool      `json:"confirmed"`
+	ApplicationID        *uint     `json:"application_id,omitempty"`
 }
 
 type HealthScoreRequest struct {

@@ -5,3 +5,4 @@ export { jobService } from "./jobService";
 export { applicationService } from "./applicationService";
 export { resumeService } from "./resumeService";
 export { aiService } from "./aiService";
+export { emailService } from "./emailService";
